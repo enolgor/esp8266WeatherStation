@@ -1,5 +1,6 @@
 #include <ESP8266WebServer.h>
 #include <Wire.h>
+#include <EEPROM.h>
 #include <Adafruit_Sensor.h>
 #include <Adafruit_BME280.h>
 #include <Adafruit_TSL2561_U.h>
@@ -26,8 +27,16 @@ Adafruit_SSD1306 display(OLED_RESET);
 #define SCREEN_NETINFO     5
 #define SCREENS            6
 
+#define SERVER_PORT 80
+
 Adafruit_BME280 bme;
 Adafruit_TSL2561_Unified tsl = Adafruit_TSL2561_Unified(TSL2561_ADDR_FLOAT, 12345);
+
+/* AP MODE CONFIG */
+IPAddress local_IP(192,168,1,1);
+IPAddress gateway(192,168,1,1);
+IPAddress subnet(255,255,255,0);
+const String apssid = "ESP8266WeatherStation";
 
 /* ICONS */
 static const unsigned char PROGMEM temperature_bmp[] = {0xff,0xff,0xff,0xfc,0xff,0xff,0xff,0xfc,0xff,0xff,0xff,0xfc,0xff,0xf8,0x7f,0xfc,0xff,0xf0,0x3f,0xfc,0xff,0xe0,0x1f,0xfc,0xff,0xe0,0x1f,0xfc,0xff,0xe0,0x1f,0xfc,0xff,0xe0,0x1f,0xfc,0xff,0xe0,0x1f,0xfc,0xff,0xe0,0x1f,0xfc,0xff,0xe0,0x1f,0xfc,0xff,0xe0,0x1f,0xfc,0xff,0xe0,0x1f,0xfc,0xff,0xe0,0x1f,0xfc,0xff,0xe0,0x1f,0xfc,0xff,0xe0,0x1f,0xfc,0xff,0xc0,0xf,0xfc,0xff,0xc0,0xf,0xfc,0xff,0x80,0x7,0xfc,0xff,0x80,0x7,0xfc,0xff,0x80,0x7,0xfc,0xff,0x80,0x7,0xfc,0xff,0x80,0x7,0xfc,0xff,0xc0,0xf,0xfc,0xff,0xe0,0x1f,0xfc,0xff,0xf8,0x7f,0xfc,0xff,0xff,0xff,0xfc,0xff,0xff,0xff,0xfc,0xff,0xff,0xff,0xfc};
@@ -35,20 +44,24 @@ static const unsigned char PROGMEM humidity_bmp[]= {0xff,0xff,0xff,0xfc,0xff,0xf
 static const unsigned char PROGMEM pressure_bmp[]= {0xff,0xff,0xff,0xfc,0xff,0xff,0xff,0xfc,0xff,0xff,0xff,0xfc,0xff,0xff,0xff,0xfc,0xff,0xff,0xff,0xfc,0xff,0xff,0xff,0xfc,0xff,0xff,0xff,0xfc,0xff,0xc0,0xf,0xfc,0xff,0x0,0x3,0xfc,0xfc,0x0,0x0,0xfc,0xf8,0x4,0x80,0x7c,0xf0,0x3c,0xf0,0x3c,0xe0,0xfc,0xfc,0x1c,0xf0,0xff,0xfc,0x3c,0xfc,0x7f,0xf8,0xfc,0xfe,0x7f,0xf9,0xfc,0xff,0xff,0xff,0xfc,0xff,0xff,0xff,0xfc,0xff,0xff,0x1f,0xfc,0xff,0xfc,0x3f,0xfc,0xff,0xf8,0x3f,0xfc,0xff,0xf0,0x3f,0xfc,0xff,0xf0,0x7f,0xfc,0xff,0xf8,0x7f,0xfc,0xff,0xff,0xff,0xfc,0xff,0xff,0xff,0xfc,0xff,0xff,0xff,0xfc,0xff,0xff,0xff,0xfc,0xff,0xff,0xff,0xfc,0xff,0xff,0xff,0xfc};
 static const unsigned char PROGMEM light_bmp[] = {0xff,0xff,0xff,0xfc,0xff,0xff,0xff,0xfc,0xff,0xff,0xff,0xfc,0xff,0xf0,0x3f,0xfc,0xff,0xc0,0xf,0xfc,0xff,0x80,0x7,0xfc,0xff,0x0,0x3,0xfc,0xfe,0x0,0x1,0xfc,0xfe,0x0,0x1,0xfc,0xfc,0x0,0x0,0xfc,0xfc,0x0,0x0,0xfc,0xfc,0x0,0x0,0xfc,0xfc,0x0,0x0,0xfc,0xfc,0x0,0x0,0xfc,0xfc,0x0,0x0,0xfc,0xfe,0x0,0x1,0xfc,0xfe,0x0,0x1,0xfc,0xff,0x0,0x3,0xfc,0xff,0x80,0x7,0xfc,0xff,0xc0,0xf,0xfc,0xff,0xc0,0xf,0xfc,0xff,0xc0,0xf,0xfc,0xff,0xc0,0xf,0xfc,0xff,0xc0,0xf,0xfc,0xff,0xe0,0x1f,0xfc,0xff,0xf0,0x3f,0xfc,0xff,0xfc,0xff,0xfc,0xff,0xff,0xff,0xfc,0xff,0xff,0xff,0xfc,0xff,0xff,0xff,0xfc};
 
-/* Put your SSID & Password */
-const char* ssid = "JAREKO";  // Enter SSID here
-const char* password = "e^(pi*i)+1=0";  //Enter Password here
-const int port = 80;
-const int refreshInterval = 5000;
+/* Client mode config */
+const int MAX_CONNECT = 20;
 const int button = 15;
-const int maxRefreshCount = 6;
+const int maxRefreshCount = 20;
+const int refreshCountBlank = 120;
+const int maxResetCount = 40;
 
 // READING VARS
+uint addr = 0;
+struct { 
+  char ssid[32] = "";
+  char pass[63] = "";
+} wifidata;
 String ip;
 float temperature, humidity, pressure, altitude, light;
 sensors_event_t event;
 
-ESP8266WebServer server(port);              
+ESP8266WebServer server(SERVER_PORT);              
  
 void setup() {
   pinMode(button, INPUT);
@@ -76,23 +89,75 @@ void setup() {
   }
   tsl.enableAutoRange(true);
   tsl.setIntegrationTime(TSL2561_INTEGRATIONTIME_13MS);
-  display.println("Connecting to " + String(ssid));
+
+  EEPROM.begin(512);
+  EEPROM.get(addr,wifidata);
+
+  if ( strcmp(wifidata.ssid,"") == 0 && strcmp(wifidata.pass, "")==0){
+      APMode();
+  }else{ 
+      ClientMode();
+  }
+}
+
+void APMode() {
+  display.println("CONFIG MODE");
+  display.print("\nSetting AP...");
+  display.display();
+  if(!WiFi.softAPConfig(local_IP, gateway, subnet)) {
+    display.println("FAIL");
+    display.display();
+    while(1);
+  }
+  display.print("OK\n\nStarting AP...");
+  display.display();
+  if(!WiFi.softAP(apssid)) {
+    display.println("FAIL");
+    display.display();
+    while(1);
+  }
+  display.println("OK");
+  display.display();
+  delay(2000);
+  display.clearDisplay();
+  display.setCursor(0,0);
+  display.println("Connect to SSID:\n\n" + apssid);
+  display.print("\nGo to:\n\nhttp://" + ip2Str(WiFi.softAPIP()) + "/");
+  display.display();
+  server.on("/", handle_Index_AP);
+  server.on("/index.html", handle_Index_AP);
+  server.onNotFound(handle_NotFound);
+  server.begin();
+}
+
+void ClientMode() {
+  display.println("Connecting to:\n" + String(wifidata.ssid));
   display.display();
 
-  //connect to your local wi-fi network
-  WiFi.begin(ssid, password);
+  WiFi.begin(wifidata.ssid, wifidata.pass);
 
-  //check wi-fi is connected to wi-fi network
+  int count = 0;
   while (WiFi.status() != WL_CONNECTED) {
     delay(1000);
+    count++;
     display.print(".");
     display.display();
+    if (count == MAX_CONNECT) {
+      display.clearDisplay();
+      display.setCursor(0,0);
+      display.println("Can't connect\n\nDevice will RESET...");
+      display.display();
+      strncpy(wifidata.ssid, "",32);
+      strncpy(wifidata.pass, "", 63);
+      delay(2000);
+      do_reset();
+    }
   }
   display.clearDisplay();
   display.display();
   display.setCursor(0,0);
   
-  display.println("Connected to " + String(ssid)+ "!");
+  display.println("Connected to " + String(wifidata.ssid)+ "!");
   ip = ip2Str(WiFi.localIP());
   display.println("\nIP: " + ip);
   display.display();
@@ -125,9 +190,18 @@ int screen = SCREEN_NONE;
 int lastMillis = 0;
 int currentMillis = 0;
 int refreshCount = 0;
+int resetCount = 0;
 
 void loop() {
   server.handleClient();
+  currentMillis = millis();
+  if (lastMillis <= (currentMillis - 250)) {
+    loopEvery250();
+    lastMillis = millis();
+  }
+}
+
+void loopEvery250() {
   currentButtonState = digitalRead(button);
   if (currentButtonState == HIGH && lastButtonState == LOW) {
     lastButtonState = HIGH;
@@ -136,18 +210,27 @@ void loop() {
       screen = 0;
     }
     refreshCount = 0;
+    resetCount = 0;
     showScreen(screen, false);
   } else if(currentButtonState == LOW && lastButtonState == HIGH){
     lastButtonState = LOW;
+    resetCount = 0;
+  } else if(currentButtonState == HIGH && lastButtonState == HIGH){
+    resetCount++;
+    if (resetCount == maxResetCount) {
+      resetCount = 0;
+      strncpy(wifidata.ssid, "", 32);
+      strncpy(wifidata.pass, "", 63);
+      do_reset();
+    }
   }
   if(screen != SCREEN_NONE) {
-    currentMillis = millis();
-    if (lastMillis <= currentMillis - refreshInterval) {
-      lastMillis = currentMillis;
-      refreshCount++;
-      if(refreshCount > maxRefreshCount) {
+    refreshCount++;
+    if (refreshCount % maxRefreshCount == 0) {
+      if(refreshCount == refreshCountBlank) {
         screen = SCREEN_NONE;
         showScreen(screen, false);
+        refreshCount = 0;
       } else {
         showScreen(screen, true);
       }
@@ -205,12 +288,26 @@ void showScreen(int screen, boolean refresh) {
       display.setTextSize(1);
       display.setTextColor(WHITE);
       display.setCursor(0,0);
-      display.println("SSID: " + String(ssid));
+      display.println("SSID: " + String(wifidata.ssid));
       display.println("\nIP: " + ip);
-      display.println("\nPort: " + String(port));
+      display.println("\nPort: " + String(SERVER_PORT));
     break;
   }
   display.display();
+}
+
+void do_reset() {
+  EEPROM.put(addr,wifidata);
+  EEPROM.commit();
+  delay(1000);
+  display.setTextSize(1);
+  display.setTextColor(WHITE);
+  display.clearDisplay();
+  display.setCursor(0,0);
+  display.println("RESET DONE");
+  display.println("\nDisconnect and connect the device");
+  display.display();
+  while(1);
 }
 
 void handle_Index() {
@@ -264,6 +361,56 @@ void handle_JsonMeasurements() {
   json += light;
   json += "}";
   server.send(200, "application/json", json); 
+}
+
+void handle_Index_AP() {
+  if (server.hasArg("ssid") && server.hasArg("pass")) {
+    Serial.println("SSID: " + server.arg("ssid") + ", PASS: " + server.arg("pass"));
+    server.arg("ssid").toCharArray(wifidata.ssid, 32);
+    server.arg("pass").toCharArray(wifidata.pass, 32);
+    //strncpy(wifidata.ssid, server.arg("ssid"),32);
+    //strncpy(wifidata.pass, server.arg("pass"), 63);
+    String html = "<!DOCTYPE html>\n<html>\n";
+    html += "  <head>\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0, user-scalable=no\">\n";
+    html += "    <title>ESP8266 Weather Station Config</title>\n";
+    html += "    <style>\n      html{font-family: Helvetica; display: inline-block; margin: 0px auto; text-align: center;}\n";
+    html += "      body{margin-top: 50px;}\n      h1{color: #444444;margin: 50px auto 30px;}\n";
+    html += "      p{color: #444444;margin-bottom: 10px;}\n";
+    html += "    </style>\n";
+    html += "  </head>\n";
+    html += "  <body>\n";
+    html += "    <div id=\"webpage\">\n";
+    html += "      <h1>ESP8266 Weather Station Config</h1>\n";
+    html += "      <p><span>Successfully configured</span></p>\n";
+    html += "      <p><span style=\"color:red;\">Disconnect and connect the weather station.</span></p>\n";
+    html += "    </div>\n";
+    html += "  </body>\n";
+    html += "</html>\n";
+    server.send(200, "text/html", html);
+    delay(3000);
+    do_reset();
+  } else {
+    String html = "<!DOCTYPE html>\n<html>\n";
+    html += "  <head>\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0, user-scalable=no\">\n";
+    html += "    <title>ESP8266 Weather Station Config</title>\n";
+    html += "    <style>\n      html{font-family: Helvetica; display: inline-block; margin: 0px auto; text-align: center;}\n";
+    html += "      body{margin-top: 50px;}\n      h1{color: #444444;margin: 50px auto 30px;}\n";
+    html += "      p{color: #444444;margin-bottom: 10px;}\n";
+    html += "    </style>\n";
+    html += "  </head>\n";
+    html += "  <body>\n";
+    html += "    <div id=\"webpage\">\n";
+    html += "      <h1>ESP8266 Weather Station Config</h1>\n";
+    html += "      <form action=\"/\" method=\"post\">\n";
+    html += "      <p>SSID: <input type=\"text\" name=\"ssid\"/></p>\n";
+    html += "      <p>PASS: <input type=\"text\" name=\"pass\"/></p>\n";
+    html += "      <p><input type=\"submit\" value=\"Send\"/></p>\n";
+    html += "      </form>\n";
+    html += "    </div>\n";
+    html += "  </body>\n";
+    html += "</html>\n";
+    server.send(200, "text/html", html);
+  }
 }
 
 void handle_NotFound(){
